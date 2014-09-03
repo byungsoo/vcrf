@@ -1,58 +1,74 @@
 % Test inference code
-
-Opts = pilot_test_inference_opts_general();
-
 fn = 'img_0156'; % Load a test image
 
+UnaryPotsDir = 'intermediate/UnaryPots';
+DetHopsDir = 'intermediate/DetHops';
+PlaneHopsDir = 'intermediate/PlaneHops';
+
+% Opts = pilot_test_inference_opts_general();
 
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 1. Load features from different modules
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% -- i.e. Stuff unary features, detector, planes
 
-% 1.1. Stuff Unary features
+% Build stuff unary pots
 Feat.StuffUnary = [];
-SegFn = fullfile(Opts.FeatStuffUnaryPath, [fn '.seg']);
-Seg  = ReadMatrixFromTxtFile(SegFn) + 1;
+SegFn = fullfile(UnaryPotsDir, [fn '.seg']);
+LabelFn = fullfile(UnaryPotsDir, [fn '.labels.txt']);
+ConfFn = fullfile(UnaryPotsDir, [fn '.boosted.txt']);
+
+if ~exist(SegFn,'file') || ~exist(LabelFn,'file') || ~exist(ConfFn,'file'),
+	BuildUnaryPots(fn); % BYUNGSOO::TODO
+    if ~exist(SegFn,'file') || ~exist(LabelFn,'file') || ~exist(ConfFn,'file'),
+        disp('Unary potentials are not processed properly.');
+        keyboard;
+    end
+end
+
+
+
+Seg  = load(SegFn) + 1;
 nSeg = max(Seg(:));
 
-LabelFn = fullfile(Opts.FeatStuffUnaryPath, [fn '.labels.txt']);
-Label = ReadMatrixFromTxtFile(LabelFn) + 1;
+Label = load(LabelFn) + 1;
 Label(Label>=14) = 14; % Don't distinguish walls with different orientations
 
-ConfFn = fullfile(Opts.FeatStuffUnaryPath, [fn '.boosted.txt']);
-Conf = ReadMatrixFromTxtFile(ConfFn);
+Conf = load(ConfFn);
+
+
+
 Feat.StuffUnary = Conf(:, 2:end)';
 Feat.StuffUnary = Feat.StuffUnary - min(Feat.StuffUnary(:)) + 0.01;
 Feat.StuffUnary = Feat.StuffUnary / max(Feat.StuffUnary(:));
 Feat.StuffUnary = -log(Feat.StuffUnary);
 Feat.StuffUnary = Feat.StuffUnary * Opts.w_stuff_unary;
 
-% 1.2. Detection features (X,Y)
+
+
+% Detection features (X,Y)
+%
 % hop_det(i).ind
 %           .w
 %           .gamma = #superpixel
 %           .Q = R * sum(w_i)
 %           .thing_uw = score * #superpixel
+
 Feat.HopDet = struct('ind', {}, 'w', {}, 'gamma', {}, 'Q', {}, 'thing_uw', {});
-ValidDetIndex = [0 0]; % meaningless set
-for iC = 1:numel(Opts.ObjClsList)
-    if isfield(Opts, 'DetScoreBiasPerClass'),
-        DetScoreBias_backup = Opts.DetScoreBias;
-        Opts.DetScoreBias = Opts.DetScoreBiasPerClass{iC};
-    end
-    if isfield(Opts, 'w_gamma_per_class'),
-        w_gamma_backup = Opts.w_gamma;
-        Opts.w_gamma = Opts.w_gamma_per_class{iC};
-    end
-    if isfield(Opts, 'w_thing_uw_per_class'),
-        w_thing_uw_backup = Opts.w_thing_uw;
-        Opts.w_thing_uw = Opts.w_thing_uw_per_class{iC};
-    end
-    tDet = load(fullfile(Opts.FeatDetPath, Opts.ObjClsList{iC}, [fn '.mat']));
+ValidDetIndex = [0 0]; % dummy
+for iC = 1:numel(ObjClsList) % BYUNGSOO::TODO::Define ObjClsList
+%     if isfield(Opts, 'DetScoreBiasPerClass'),
+%         DetScoreBias_backup = Opts.DetScoreBias;
+%         Opts.DetScoreBias = Opts.DetScoreBiasPerClass{iC};
+%     end
+%     if isfield(Opts, 'w_gamma_per_class'),
+%         w_gamma_backup = Opts.w_gamma;
+%         Opts.w_gamma = Opts.w_gamma_per_class{iC};
+%     end
+%     if isfield(Opts, 'w_thing_uw_per_class'),
+%         w_thing_uw_backup = Opts.w_thing_uw;
+%         Opts.w_thing_uw = Opts.w_thing_uw_per_class{iC};
+%     end
+    tDet = load(fullfile(DetHopsDir, ObjClsList{iC}, [fn '.mat']));
     for iB = 1:numel(tDet.Bboxes)
-        [~, ClassId] = ismember(Opts.ObjClsList{iC}, Opts.AllClsList);
+        [~, ClassId] = ismember(ObjClsList{iC}, AllClsList);
         Feat.HopDet(end+1) = GenFeatHopDet(...
             tDet.Bboxes(iB).det, Seg, ClassId, Opts);
         ValidDetIndex = [ValidDetIndex; iC iB];
@@ -61,25 +77,34 @@ for iC = 1:numel(Opts.ObjClsList)
             ValidDetIndex = ValidDetIndex(1:end-1, :);
         end
     end
-    if isfield(Opts, 'DetScoreBiasPerClass'),
-        Opts.DetScoreBias = DetScoreBias_backup;
-    end
-    if isfield(Opts, 'w_gamma_per_class'),
-        Opts.w_gamma = w_gamma_backup;
-    end
-    if isfield(Opts, 'w_thing_uw_per_class'),
-        Opts.w_thing_uw = w_thing_uw_backup;
-    end
+%     if isfield(Opts, 'DetScoreBiasPerClass'),
+%         Opts.DetScoreBias = DetScoreBias_backup;
+%     end
+%     if isfield(Opts, 'w_gamma_per_class'),
+%         Opts.w_gamma = w_gamma_backup;
+%     end
+%     if isfield(Opts, 'w_thing_uw_per_class'),
+%         Opts.w_thing_uw = w_thing_uw_backup;
+%     end
     
 end
 ValidDetIndex = ValidDetIndex(2:end, :);
 
-% 1.3. Plane features (X,P)
+
+
+
+
+% Plane features (X,P)
 Feat.HopPlane = struct('ind', {}, 'w', {}, 'gamma', {}, 'Q', {});
-if ~exist(fullfile(Opts.FeatPlanePath, [fn '.mat']), 'file'),
-    continue;
+if ~exist(fullfile(PlaneHopsDir, [fn '.mat']), 'file'),
+    BuildPlaneHops(fn); % BYUNGSOO::TODO
+    if ~exist(fullfile(PlaneHopsDir, [fn '.mat']), 'file'),
+        disp('Plane detection results are missing');
+        keyboard;
+    end
 end
-load(fullfile(Opts.FeatPlanePath, [fn '.mat']), 'Planes');
+
+load(fullfile(PlaneHopsDir, [fn '.mat']), 'Planes');
 ValidPlaneIndex = [];
 for iP = 1:numel(Planes),
     tP = Planes(iP);
@@ -92,6 +117,10 @@ for iP = 1:numel(Planes),
     end
 end
 
+
+
+
+
 % 1.4. Plane x Supp (Thing) features (P,S)
 Feat.ThingPlane = struct('thing_id', {}, 'plane_id', {}, 'D', {}, 'n', {}, 'dr', {});
 iPS = 0;
@@ -99,7 +128,7 @@ for iP = ValidPlaneIndex, %1:numel(Planes),
     tP = Planes(iP);
     iThing = 0;
     for iC = 1:numel(Opts.ObjClsList),
-        tDet = load(fullfile(Opts.FeatDetPath, Opts.ObjClsList{iC}, [fn '.mat']));
+        tDet = load(fullfile(DetHopsDir, ObjClsList{iC}, [fn '.mat']));
         for iB = 1:numel(tDet.Bboxes),
 			if isempty(find(ValidDetIndex(:,1)==iC & ValidDetIndex(:,2)==iB)),
 				continue;
@@ -126,6 +155,10 @@ for iP = ValidPlaneIndex, %1:numel(Planes),
         end
     end
 end
+
+
+
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
